@@ -671,7 +671,8 @@
     gap: 12px;
   }
   .calendar-head { display: flex; align-items: center; justify-content: space-between; }
-  .calendar-month-label { font-family: var(--font-display); font-weight: 600; font-size: 0.95rem; }
+  .calendar-month-label { font-family: var(--font-display); font-weight: 600; font-size: 0.95rem; display: inline-flex; align-items: center; gap: 3px; }
+  .calendar-month-caret { font-size: 0.75rem; color: var(--text-tertiary); }
   .calendar-nav-btn {
     width: 32px; height: 32px;
     border-radius: 8px;
@@ -923,6 +924,22 @@
   }
   .modal-actions { display: flex; gap: 10px; margin-top: 4px; }
   .modal-actions > * { flex: 1; }
+
+  .month-picker-row { display: flex; gap: 10px; }
+  .month-picker-select {
+    flex: 1;
+    padding: 13px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 1.05rem;
+    font-weight: 600;
+    text-align: center;
+    text-align-last: center;
+  }
 
   /* ---------- tab bar ---------- */
   .tabbar {
@@ -1542,7 +1559,7 @@
 
     var html = '<div class="calendar-card">';
     html += '<div class="calendar-head"><button class="calendar-nav-btn" data-action="calendar-prev">‹</button>';
-    html += '<span class="calendar-month-label">' + monthLabel(ym) + '</span>';
+    html += '<button class="calendar-month-label" data-action="open-month-picker">' + monthLabel(ym) + ' <span class="calendar-month-caret">⌄</span></button>';
     html += '<button class="calendar-nav-btn" data-action="calendar-next">›</button></div>';
     html += '<div class="calendar-weekdays">';
     WEEKDAYS.forEach(function (w) { html += '<span>' + w + '</span>'; });
@@ -1938,7 +1955,7 @@
       var sorted = sets.slice().sort(function (a, b) { return b.ts - a.ts; });
       html += '<div class="set-list">';
       sorted.forEach(function (s) {
-        var isPR = maxWeight > 0 && s.weight === maxWeight;
+        var isPR = maxE1rm > 0 && e1rm(s.weight, s.reps) === maxE1rm;
         html += '<div class="set-row">';
         html += '<div class="set-row-main">';
         html += '<span class="set-row-idx" style="width:auto;font-size:0.7rem;">' + formatDateShort(s.date) + '</span>';
@@ -1993,6 +2010,26 @@
       html += '<div class="modal-title">「' + escapeHtml(ex2 ? ex2.name : "") + '」を削除しますか？</div>';
       html += '<div class="modal-text">この種目に記録された' + count + '件のセットもすべて削除されます。この操作は取り消せません。</div>';
       html += '<div class="modal-actions"><button class="btn-secondary" data-action="modal-cancel">キャンセル</button><button class="btn-danger" data-action="modal-confirm-delete-exercise" data-id="' + m.id + '">削除する</button></div>';
+    } else if (m.type === "calendarMonthPicker") {
+      var pickerParts = ui.calendarMonth.split("-").map(Number);
+      var curYear = pickerParts[0], curMonth = pickerParts[1];
+      var dataYears = state.sets.map(function (s) { return parseInt(s.date.slice(0, 4), 10); });
+      var minYear = Math.min(curYear, dataYears.length ? Math.min.apply(null, dataYears) : curYear) - 1;
+      var maxYear = Math.max(curYear, parseInt(todayStr().slice(0, 4), 10)) + 1;
+      html += '<div class="modal-title">年月を選択</div>';
+      html += '<div class="month-picker-row">';
+      html += '<select id="picker-year" class="month-picker-select">';
+      for (var py = maxYear; py >= minYear; py--) {
+        html += '<option value="' + py + '"' + (py === curYear ? " selected" : "") + '>' + py + '年</option>';
+      }
+      html += '</select>';
+      html += '<select id="picker-month" class="month-picker-select">';
+      for (var pm = 1; pm <= 12; pm++) {
+        html += '<option value="' + pm + '"' + (pm === curMonth ? " selected" : "") + '>' + pm + '月</option>';
+      }
+      html += '</select>';
+      html += '</div>';
+      html += '<div class="modal-actions"><button class="btn-secondary" data-action="modal-cancel">キャンセル</button><button class="btn-primary" data-action="modal-goto-month">移動する</button></div>';
     } else if (m.type === "confirmDeleteSet") {
       html += '<div class="modal-title">このセットを削除しますか？</div>';
       html += '<div class="modal-actions"><button class="btn-secondary" data-action="modal-cancel">キャンセル</button><button class="btn-danger" data-action="modal-confirm-delete-set" data-id="' + m.id + '">削除する</button></div>';
@@ -2118,13 +2155,15 @@
       if (!ui.selectedExerciseId) return;
       if (!(ui.entryWeight >= 0) || !(ui.entryReps >= 1)) return;
       var newWeightKg = toStorageWeight(ui.entryWeight);
+      var newReps = Math.round(ui.entryReps);
       var priorForEx = state.sets.filter(function (s) { return s.exerciseId === ui.selectedExerciseId; });
-      var prevMax = priorForEx.length ? Math.max.apply(null, priorForEx.map(function (s) { return s.weight; })) : null;
+      var prevMaxE1rm = priorForEx.length ? Math.max.apply(null, priorForEx.map(function (s) { return e1rm(s.weight, s.reps); })) : null;
+      var newE1rm = e1rm(newWeightKg, newReps);
       state.sets.push({
         id: uid("set"),
         exerciseId: ui.selectedExerciseId,
         weight: newWeightKg,
-        reps: Math.round(ui.entryReps),
+        reps: newReps,
         date: ui.selectedDate,
         memo: (ui.entryMemo || "").trim(),
         ts: Date.now()
@@ -2132,7 +2171,8 @@
       saveState();
       ui.entryMemo = "";
       ui.logFlash = true;
-      if (prevMax !== null && newWeightKg > prevMax) showToast("自己ベスト更新！ " + dispW(newWeightKg) + unitLabel());
+      if (prevMaxE1rm !== null && newE1rm > prevMaxE1rm) showToast("自己ベスト更新！ " + dispW(newWeightKg) + unitLabel() + '×' + newReps + '回');
+      else showToast("記録しました");
       render();
     } else if (action === "delete-set") {
       ui.modal = { type: "confirmDeleteSet", id: id };
@@ -2264,6 +2304,15 @@
       render();
     } else if (action === "calendar-next") {
       ui.calendarMonth = shiftMonth(ui.calendarMonth, 1);
+      render();
+    } else if (action === "open-month-picker") {
+      ui.modal = { type: "calendarMonthPicker" };
+      renderModal();
+    } else if (action === "modal-goto-month") {
+      var pickY = document.getElementById("picker-year");
+      var pickM = document.getElementById("picker-month");
+      if (pickY && pickM) ui.calendarMonth = pickY.value + "-" + pad2(parseInt(pickM.value, 10));
+      ui.modal = null;
       render();
     } else if (action === "calendar-day-tap") {
       ui.calendarTapDate = target.getAttribute("data-date");
