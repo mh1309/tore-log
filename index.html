@@ -367,8 +367,17 @@
     font-weight: 600;
     letter-spacing: 0.04em;
     text-align: center;
+    transform: scale(1);
+    transition: transform 0.09s ease, background 0.09s ease;
   }
-  .btn-primary:active { background: var(--accent-strong); }
+  .btn-primary:active { background: var(--accent-strong); transform: scale(0.96); }
+  .btn-primary.btn-flash { animation: btn-log-pulse 0.36s ease; }
+  @keyframes btn-log-pulse {
+    0% { transform: scale(1); background: var(--accent); }
+    30% { transform: scale(0.93); background: var(--accent-strong); }
+    65% { transform: scale(1.045); background: var(--accent-strong); }
+    100% { transform: scale(1); background: var(--accent); }
+  }
 
   .btn-secondary {
     padding: 10px 16px;
@@ -1275,6 +1284,7 @@
     entryWeight: 20,
     entryReps: 10,
     entryMemo: "",
+    logFlash: false,
     exerciseDetailId: null,
     chartTooltipIndex: {},
     modal: null,
@@ -1403,7 +1413,8 @@
       html += '<div class="memo-row"><input id="memo-input" class="memo-input" type="text" inputmode="text" maxlength="60" placeholder="メモ（任意）例：フォーム良好" value="' + escapeHtml(ui.entryMemo) + '"></div>';
 
       html += '<div class="e1rm-preview" id="e1rm-preview">推定1RM　<b>' + dispW(preview) + ' ' + unitLabel() + '</b></div>';
-      html += '<button class="btn-primary" data-action="log-set">このセットを記録する</button>';
+      html += '<button class="btn-primary' + (ui.logFlash ? ' btn-flash' : '') + '" data-action="log-set">このセットを記録する</button>';
+      ui.logFlash = false;
       html += '</div>';
 
       html += renderRestCard();
@@ -2120,6 +2131,7 @@
       });
       saveState();
       ui.entryMemo = "";
+      ui.logFlash = true;
       if (prevMax !== null && newWeightKg > prevMax) showToast("自己ベスト更新！ " + dispW(newWeightKg) + unitLabel());
       render();
     } else if (action === "delete-set") {
