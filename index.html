@@ -907,6 +907,40 @@
   .ex-day-diff.is-up { color: var(--accent); }
   .ex-day-diff.is-down { color: var(--accent2); }
   .day-set-chip.is-readonly { padding: 5px 10px; }
+  .prev-session { display: flex; flex-direction: column; gap: 6px; margin-top: -4px; }
+  .prev-session-tip { margin-left: 8px; font-size: 0.68rem; color: var(--text-tertiary); }
+  .prev-set-chip {
+    background: var(--surface-2);
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 6px 11px;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .prev-set-chip:active { background: var(--surface-3); }
+  .prev-set-chip.is-picked { border-color: var(--accent); background: var(--accent-wash); }
+  .set-row-edit { text-align: left; padding: 4px 0; display: flex; align-items: baseline; }
+  .set-row-edit .edit-mark { margin-left: 8px; font-size: 0.75rem; color: var(--text-tertiary); font-family: var(--font-body); }
+  .set-list-tip { font-size: 0.7rem; color: var(--text-tertiary); text-align: center; }
+  .edit-set-grid { display: flex; gap: 10px; }
+  .edit-set-field { flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .edit-set-field .modal-input { font-family: var(--font-mono); font-size: 1.1rem; font-weight: 600; }
+  .ex-list-head { display: flex; align-items: center; justify-content: space-between; }
+  .ex-row.is-reordering { padding: 8px 10px 8px 16px; }
+  .reorder-btns { display: flex; gap: 6px; flex: 0 0 auto; }
+  .reorder-btn {
+    width: 40px; height: 40px;
+    border-radius: 10px;
+    background: var(--surface-2);
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .reorder-btn:active { background: var(--surface-3); }
+  .reorder-btn:disabled { opacity: 0.3; }
   .custom-step-row { display: flex; align-items: center; gap: 8px; }
   .custom-step-label { font-size: 0.78rem; color: var(--text-secondary); white-space: nowrap; }
   .settings-card .custom-step-input { flex: 1; min-width: 0; height: 41px; padding: 0 12px; font-size: 0.9rem; font-family: var(--font-mono); }
@@ -1354,6 +1388,7 @@
     detailReturnTab: null,
     detailShowAll: {},
     hiddenListOpen: false,
+    reorderMode: false,
     chartTooltipIndex: {},
     modal: null,
     modalPart: "",
@@ -1491,11 +1526,19 @@
       html += '<div class="entry-card">';
       html += '<div class="detail-title-row"><span class="entry-card-title">' + escapeHtml(ex.name) + '</span><button class="btn-text" data-action="view-exercise-history" data-id="' + ex.id + '">過去の記録 ›</button></div>';
 
-      var priorSets = state.sets.filter(function (s) { return s.exerciseId === ex.id && s.date !== ui.selectedDate; });
-      priorSets.sort(function (a, b) { return b.ts - a.ts; });
+      // previous session = the most recent day before the selected date that has sets for this exercise
+      var priorSets = state.sets.filter(function (s) { return s.exerciseId === ex.id && s.date < ui.selectedDate; });
       if (priorSets.length) {
-        var last = priorSets[0];
-        html += '<div class="last-set-hint">前回（' + formatDateShort(last.date) + '）: <b>' + dispW(last.weight) + unitLabel() + ' × ' + last.reps + '回</b></div>';
+        var prevDate = priorSets.reduce(function (latest, s) { return s.date > latest ? s.date : latest; }, "");
+        var prevSession = priorSets.filter(function (s) { return s.date === prevDate; }).sort(function (a, b) { return a.ts - b.ts; });
+        html += '<div class="prev-session">';
+        html += '<div class="last-set-hint">前回（' + formatDateShort(prevDate) + '）<span class="prev-session-tip">タップで入力</span></div>';
+        html += '<div class="day-chip-row">';
+        prevSession.forEach(function (s) {
+          html += '<button class="prev-set-chip" data-action="use-prev-set" data-weight="' + s.weight + '" data-reps="' + s.reps + '">' + dispW(s.weight) + '×' + s.reps + '</button>';
+        });
+        html += '</div>';
+        html += '</div>';
       }
 
       html += '<div class="stepper-row">';
@@ -1532,7 +1575,7 @@
           html += '<div class="set-row">';
           html += '<div class="set-row-main">';
           html += '<span class="set-row-idx">' + (i + 1) + '</span>';
-          html += '<span class="set-row-figure">' + dispW(s.weight) + unitLabel() + '<span class="x">×</span>' + s.reps + '<span class="x">回</span></span>';
+          html += '<button class="set-row-figure set-row-edit" data-action="open-edit-set" data-id="' + s.id + '">' + dispW(s.weight) + unitLabel() + '<span class="x">×</span>' + s.reps + '<span class="x">回</span><span class="edit-mark">✎</span></button>';
           html += '<span class="set-row-e1rm">e1RM ' + dispW(e1rm(s.weight, s.reps)) + '</span>';
           html += '<button class="set-row-del" data-action="delete-set" data-id="' + s.id + '">×</button>';
           html += '</div>';
@@ -1540,6 +1583,7 @@
           html += '</div>';
         });
         html += '</div>';
+        html += '<div class="set-list-tip">セットをタップすると修正できます</div>';
       } else {
         html += '<div class="empty-state">この日はまだ' + escapeHtml(ex.name) + 'の記録がありません。</div>';
       }
@@ -1947,12 +1991,27 @@
       return row;
     }
 
+    function reorderRow(ex, i, total) {
+      var row = '<div class="ex-row is-reordering">';
+      row += '<span class="ex-row-name">' + escapeHtml(ex.name) + (ex.part ? '<span class="part-tag">' + escapeHtml(ex.part) + '</span>' : '') + '</span>';
+      row += '<span class="reorder-btns">';
+      row += '<button class="reorder-btn" data-action="move-exercise" data-id="' + ex.id + '" data-dir="-1" aria-label="上へ"' + (i === 0 ? ' disabled' : '') + '>▲</button>';
+      row += '<button class="reorder-btn" data-action="move-exercise" data-id="' + ex.id + '" data-dir="1" aria-label="下へ"' + (i === total - 1 ? ' disabled' : '') + '>▼</button>';
+      row += '</span></div>';
+      return row;
+    }
+
     var html = renderSettingsCard();
+    var active = activeExercises();
     html += '<section>';
-    html += '<div class="ex-list">';
-    activeExercises().forEach(function (ex) { html += exRow(ex); });
+    html += '<div class="ex-list-head"><h2 class="section-title">種目</h2>';
+    if (active.length > 1) html += '<button class="btn-text" data-action="toggle-reorder">' + (ui.reorderMode ? '完了' : '並び替え') + '</button>';
     html += '</div>';
-    html += '<button class="btn-secondary" data-action="open-add-exercise">＋ 種目を追加</button>';
+    if (ui.reorderMode) html += '<div class="set-list-tip" style="text-align:left;">▲▼で並び順を変えられます。記録画面の種目ボタンもこの順になります。</div>';
+    html += '<div class="ex-list">';
+    active.forEach(function (ex, i) { html += ui.reorderMode ? reorderRow(ex, i, active.length) : exRow(ex); });
+    html += '</div>';
+    if (!ui.reorderMode) html += '<button class="btn-secondary" data-action="open-add-exercise">＋ 種目を追加</button>';
     var hiddenList = state.exercises.filter(function (ex) { return ex.hidden; });
     if (hiddenList.length) {
       html += '<details class="hidden-ex-group"' + (ui.hiddenListOpen ? ' open' : '') + '>';
@@ -2303,6 +2362,18 @@
     } else if (m.type === "confirmDeleteSet") {
       html += '<div class="modal-title">このセットを削除しますか？</div>';
       html += '<div class="modal-actions"><button class="btn-secondary" data-action="modal-cancel">キャンセル</button><button class="btn-danger" data-action="modal-confirm-delete-set" data-id="' + m.id + '">削除する</button></div>';
+    } else if (m.type === "editSet") {
+      var setToEdit = state.sets.filter(function (s) { return s.id === m.id; })[0];
+      if (!setToEdit) { ui.modal = null; root.innerHTML = ""; return; }
+      var exOfSet = exerciseById(setToEdit.exerciseId);
+      html += '<div class="modal-title">セットを修正</div>';
+      html += '<div class="modal-text">' + escapeHtml(exOfSet ? exOfSet.name : "") + '・' + formatDateLabel(setToEdit.date) + '</div>';
+      html += '<div class="edit-set-grid">';
+      html += '<label class="edit-set-field"><span class="settings-row-label">重量（' + unitLabel() + '）</span><input class="modal-input" id="edit-weight" type="number" inputmode="decimal" step="0.01" min="0" value="' + dispW(setToEdit.weight) + '"></label>';
+      html += '<label class="edit-set-field"><span class="settings-row-label">回数</span><input class="modal-input" id="edit-reps" type="number" inputmode="numeric" step="1" min="1" value="' + setToEdit.reps + '"></label>';
+      html += '</div>';
+      html += '<input class="modal-input" id="edit-memo" type="text" maxlength="60" placeholder="メモ（任意）" value="' + escapeHtml(setToEdit.memo || "") + '">';
+      html += '<div class="modal-actions"><button class="btn-secondary" data-action="modal-cancel">キャンセル</button><button class="btn-primary" data-action="modal-submit-edit-set" data-id="' + m.id + '">保存する</button></div>';
     } else if (m.type === "confirmDeleteBodyWeight") {
       html += '<div class="modal-title">' + formatDateLabel(m.date) + 'の体重記録を削除しますか？</div>';
       html += '<div class="modal-actions"><button class="btn-secondary" data-action="modal-cancel">キャンセル</button><button class="btn-danger" data-action="modal-confirm-delete-bw" data-date="' + m.date + '">削除する</button></div>';
@@ -2390,6 +2461,7 @@
       ui.tab = target.getAttribute("data-tab");
       ui.exerciseDetailId = null;
       ui.detailReturnTab = null;
+      ui.reorderMode = false;
       render();
     } else if (action === "select-exercise") {
       ui.selectedExerciseId = id;
@@ -2662,6 +2734,46 @@
         showToast("データを復元しました");
       }
       ui.modal = null;
+      render();
+    } else if (action === "use-prev-set") {
+      ui.entryWeight = Math.round(toDisplayWeight(parseFloat(target.getAttribute("data-weight"))) * 100) / 100;
+      ui.entryReps = parseInt(target.getAttribute("data-reps"), 10);
+      var wiPrev = document.getElementById("weight-input");
+      if (wiPrev) wiPrev.value = fmtWeight(ui.entryWeight);
+      var riPrev = document.getElementById("reps-input");
+      if (riPrev) riPrev.value = ui.entryReps;
+      updateEntryPreview();
+      document.querySelectorAll(".prev-set-chip").forEach(function (chip) { chip.classList.toggle("is-picked", chip === target); });
+    } else if (action === "open-edit-set") {
+      ui.modal = { type: "editSet", id: id };
+      renderModal();
+    } else if (action === "modal-submit-edit-set") {
+      var setEditing = state.sets.filter(function (s) { return s.id === id; })[0];
+      var ew = parseFloat((document.getElementById("edit-weight") || {}).value);
+      var er = parseInt((document.getElementById("edit-reps") || {}).value, 10);
+      if (!setEditing) { ui.modal = null; render(); return; }
+      if (!(ew >= 0) || !(er >= 1)) { showToast("重量と回数を正しく入力してください"); return; }
+      setEditing.weight = toStorageWeight(ew);
+      setEditing.reps = er;
+      setEditing.memo = ((document.getElementById("edit-memo") || {}).value || "").trim();
+      saveState();
+      ui.modal = null;
+      showToast("修正しました");
+      render();
+    } else if (action === "toggle-reorder") {
+      ui.reorderMode = !ui.reorderMode;
+      render();
+    } else if (action === "move-exercise") {
+      // swap with the neighbouring visible exercise; hidden ones keep their slots
+      var dir = parseInt(target.getAttribute("data-dir"), 10);
+      var visibleIdx = [];
+      state.exercises.forEach(function (e, i) { if (!e.hidden) visibleIdx.push(i); });
+      var pos = visibleIdx.indexOf(state.exercises.findIndex(function (e) { return e.id === id; }));
+      var otherPos = pos + dir;
+      if (pos === -1 || otherPos < 0 || otherPos >= visibleIdx.length) return;
+      var a = visibleIdx[pos], b = visibleIdx[otherPos];
+      var tmp = state.exercises[a]; state.exercises[a] = state.exercises[b]; state.exercises[b] = tmp;
+      saveState();
       render();
     } else if (action === "toggle-exercise-hidden") {
       var exToToggle = exerciseById(id);
