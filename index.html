@@ -887,6 +887,27 @@
   .chart-hit { fill: transparent; }
   .chart-dot-selected { fill: none; stroke: var(--accent2); stroke-width: 2; }
 
+  /* ---------- exercise detail: per-day records ---------- */
+  .ex-day-list { display: flex; flex-direction: column; gap: 8px; }
+  .ex-day-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .ex-day-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .ex-day-date { font-weight: 600; font-size: 0.9rem; }
+  .ex-day-summary { font-size: 0.78rem; color: var(--text-secondary); display: inline-flex; align-items: center; gap: 6px; }
+  .ex-day-summary b { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--text); }
+  .ex-day-summary .pr-badge { margin-left: 0; }
+  .ex-day-diff { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 0.74rem; font-weight: 600; color: var(--text-tertiary); }
+  .ex-day-diff.is-up { color: var(--accent); }
+  .ex-day-diff.is-down { color: var(--accent2); }
+  .ex-day-volume { font-size: 0.72rem; color: var(--text-tertiary); margin-top: -4px; }
+
   /* ---------- body weight ---------- */
   .bw-row-diff {
     font-size: 0.72rem;
@@ -1019,6 +1040,7 @@
   var KG_TO_LB = 2.2046226218;
 
   var REST_PRESETS = [60, 90, 120, 180];
+  var DETAIL_DAYS_INITIAL = 5;
 
   function uid(prefix) {
     return prefix + "_" + Math.random().toString(36).slice(2, 9) + Date.now().toString(36);
@@ -1309,6 +1331,7 @@
     logFlash: false,
     exerciseDetailId: null,
     detailReturnTab: null,
+    detailShowAll: {},
     chartTooltipIndex: {},
     modal: null,
     modalPart: "",
@@ -1985,24 +2008,71 @@
     html += '</div>';
 
     html += '<section>';
-    html += '<h2 class="section-title">全記録</h2>';
     if (sets.length) {
-      var sorted = sets.slice().sort(function (a, b) { return b.ts - a.ts; });
-      html += '<div class="set-list">';
-      sorted.forEach(function (s) {
-        var isPR = maxE1rm > 0 && e1rm(s.weight, s.reps) === maxE1rm;
-        html += '<div class="set-row">';
-        html += '<div class="set-row-main">';
-        html += '<span class="set-row-idx" style="width:auto;font-size:0.7rem;">' + formatDateShort(s.date) + '</span>';
-        html += '<span class="set-row-figure">' + dispW(s.weight) + unitLabel() + '<span class="x">×</span>' + s.reps + '<span class="x">回</span>' + (isPR ? '<span class="pr-badge">PR</span>' : '') + '</span>';
-        html += '<span class="set-row-e1rm">e1RM ' + dispW(e1rm(s.weight, s.reps)) + '</span>';
-        html += '<button class="set-row-del" data-action="delete-set" data-id="' + s.id + '">×</button>';
+      var byDate = {};
+      sets.forEach(function (s) { (byDate[s.date] = byDate[s.date] || []).push(s); });
+      var datesAsc = Object.keys(byDate).sort();
+
+      // per-day summary, computed oldest → newest so each day can be compared with the one before it
+      var days = [];
+      var bestSoFar = null;
+      datesAsc.forEach(function (date, i) {
+        var daySets = byDate[date].slice().sort(function (a, b) { return a.ts - b.ts; });
+        var top = Math.max.apply(null, daySets.map(function (s) { return s.weight; }));
+        var volume = daySets.reduce(function (sum, s) { return sum + s.weight * s.reps; }, 0);
+        days.push({
+          date: date,
+          sets: daySets,
+          top: top,
+          volume: volume,
+          diff: i > 0 ? top - days[i - 1].top : null,
+          isPR: bestSoFar !== null && top > bestSoFar
+        });
+        bestSoFar = bestSoFar === null ? top : Math.max(bestSoFar, top);
+      });
+      days.reverse();
+
+      var showAll = !!ui.detailShowAll[id];
+      var visibleDays = showAll ? days : days.slice(0, DETAIL_DAYS_INITIAL);
+
+      html += '<h2 class="section-title">全記録（' + days.length + '日・' + sets.length + 'セット）</h2>';
+      html += '<div class="ex-day-list">';
+      visibleDays.forEach(function (d) {
+        html += '<div class="ex-day-card">';
+        html += '<div class="ex-day-head">';
+        html += '<span class="ex-day-date">' + formatDateLabel(d.date) + '</span>';
+        html += '<span class="ex-day-summary">最高 <b>' + dispW(d.top) + unitLabel() + '</b>';
+        if (d.diff !== null) {
+          var dd = Math.round(toDisplayWeight(d.diff) * 100) / 100;
+          if (dd > 0) html += '<span class="ex-day-diff is-up">▲+' + fmtWeight(dd) + '</span>';
+          else if (dd < 0) html += '<span class="ex-day-diff is-down">▼−' + fmtWeight(-dd) + '</span>';
+          else html += '<span class="ex-day-diff">±0</span>';
+        }
+        if (d.isPR) html += '<span class="pr-badge">PR</span>';
+        html += '</span>';
         html += '</div>';
-        if (s.memo) html += '<div class="set-row-memo">' + escapeHtml(s.memo) + '</div>';
+        html += '<div class="ex-day-volume">' + d.sets.length + 'セット・総 ' + Number(dispW(d.volume)).toLocaleString() + unitLabel() + '</div>';
+        html += '<div class="day-chip-row">';
+        d.sets.forEach(function (s) {
+          html += '<span class="day-set-chip">' + dispW(s.weight) + '×' + s.reps + '<button data-action="delete-set" data-id="' + s.id + '" aria-label="このセットを削除">×</button></span>';
+        });
+        html += '</div>';
+        var memoSets = d.sets.filter(function (s) { return s.memo; });
+        if (memoSets.length) {
+          html += '<div class="day-memo-list">';
+          memoSets.forEach(function (s) {
+            html += '<div class="day-memo-item">' + dispW(s.weight) + '×' + s.reps + '：' + escapeHtml(s.memo) + '</div>';
+          });
+          html += '</div>';
+        }
         html += '</div>';
       });
       html += '</div>';
+      if (days.length > DETAIL_DAYS_INITIAL) {
+        html += '<button class="btn-secondary" data-action="toggle-detail-show-all" data-id="' + id + '">' + (showAll ? '直近' + DETAIL_DAYS_INITIAL + '日分だけ表示' : 'さらに表示（残り' + (days.length - DETAIL_DAYS_INITIAL) + '日）') + '</button>';
+      }
     } else {
+      html += '<h2 class="section-title">全記録</h2>';
       html += '<div class="empty-state">まだこの種目の記録はありません。</div>';
     }
     html += '</section>';
@@ -2512,6 +2582,9 @@
         showToast("データを復元しました");
       }
       ui.modal = null;
+      render();
+    } else if (action === "toggle-detail-show-all") {
+      ui.detailShowAll[id] = !ui.detailShowAll[id];
       render();
     } else if (action === "bw-date-prev") {
       ui.bwDate = addDays(ui.bwDate, -1);
