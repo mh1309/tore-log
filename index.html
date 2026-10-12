@@ -715,8 +715,8 @@
     from { transform: scale(0.55); opacity: 0; }
     to { transform: scale(1); opacity: 1; }
   }
-  .streak-line { text-align: center; font-size: 0.82rem; color: var(--text-secondary); }
-  .streak-line b { color: var(--accent); font-family: var(--font-mono); }
+  .month-count-line { text-align: center; font-size: 0.82rem; color: var(--text-secondary); }
+  .month-count-line b { color: var(--accent); font-family: var(--font-mono); }
   .calendar-caption { text-align: center; font-size: 0.82rem; color: var(--text-secondary); padding-top: 4px; border-top: 1px solid var(--border); }
 
   /* ---------- settings & data management ---------- */
@@ -1548,17 +1548,10 @@
     return { start: ym + "-01", end: ym + "-" + pad2(lastDay), ym: ym };
   }
 
-  function computeStreak() {
-    var daysWithSets = {};
-    state.sets.forEach(function (s) { daysWithSets[s.date] = true; });
-    var cursor = todayStr();
-    if (!daysWithSets[cursor]) cursor = addDays(cursor, -1);
-    var streak = 0;
-    while (daysWithSets[cursor]) {
-      streak++;
-      cursor = addDays(cursor, -1);
-    }
-    return streak;
+  function countTrainingDaysInMonth(ym) {
+    var days = {};
+    state.sets.forEach(function (s) { if (s.date.slice(0, 7) === ym) days[s.date] = true; });
+    return Object.keys(days).length;
   }
 
   function partsForDate(dateStr) {
@@ -1602,8 +1595,8 @@
       html += '<button class="' + cls + '" data-action="calendar-day-tap" data-date="' + dateStr + '"><span class="day-num">' + day + '</span></button>';
     }
     html += '</div>';
-    var streak = computeStreak();
-    html += '<div class="streak-line">' + (streak > 0 ? '現在 <b>' + streak + '日</b> 連続トレーニング中' : 'まだ連続記録はありません') + '</div>';
+    var monthDays = countTrainingDaysInMonth(ym);
+    html += '<div class="month-count-line">' + month + '月のトレーニング <b>' + monthDays + '回</b></div>';
     var capDate = ui.calendarTapDate;
     var capCount = countByDate[capDate] || 0;
     html += '<div class="calendar-caption">' + formatDateLabel(capDate) + '：';
