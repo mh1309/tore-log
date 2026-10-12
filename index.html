@@ -1,21 +1,9 @@
-<!doctype html>
-<html lang="ja">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<link rel="manifest" href="manifest.json">
-<link rel="apple-touch-icon" href="icon-180.png">
-<link rel="icon" href="icon-192.png" type="image/png">
-<meta name="theme-color" content="#b8391f">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="トレログ">
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}</style></head><body>
 <title>トレログ</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Work+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
-</head>
-<body>
+
 <style>
   :root {
     --bg: #eceae3;
@@ -894,6 +882,16 @@
   .chart-dot { fill: var(--accent); }
   .chart-dot-end { fill: var(--accent2); }
   .chart-hit { fill: transparent; }
+  .chart-dot-selected { fill: none; stroke: var(--accent2); stroke-width: 2; }
+
+  /* ---------- body weight ---------- */
+  .bw-row-diff {
+    font-size: 0.72rem;
+    color: var(--text-tertiary);
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .stat-value .stat-unit { font-size: 0.7rem; color: var(--text-tertiary); margin-left: 2px; }
 
   /* ---------- modal ---------- */
   .modal-overlay {
@@ -988,6 +986,9 @@
     </button>
     <button class="tab-btn" data-action="select-tab" data-tab="stats">
       <span class="tab-icon">▦</span><span class="tab-text">統計</span>
+    </button>
+    <button class="tab-btn" data-action="select-tab" data-tab="bodyweight">
+      <span class="tab-icon">◎</span><span class="tab-text">体重</span>
     </button>
     <button class="tab-btn" data-action="select-tab" data-tab="exercises">
       <span class="tab-icon">▲</span><span class="tab-text">種目</span>
@@ -1261,10 +1262,11 @@
     var exercises = DEFAULT_EXERCISES.map(function (d) {
       return { id: uid("ex"), name: d.name, part: d.part, addedAt: Date.now() };
     });
-    return { exercises: exercises, sets: [], stopwatch: defaultStopwatch(), settings: defaultSettings(), parts: PARTS.slice() };
+    return { exercises: exercises, sets: [], stopwatch: defaultStopwatch(), settings: defaultSettings(), parts: PARTS.slice(), bodyWeights: [] };
   }
 
   function migrateState(parsed) {
+    if (!Array.isArray(parsed.bodyWeights)) parsed.bodyWeights = [];
     if (!parsed.stopwatch) parsed.stopwatch = defaultStopwatch();
     if (!parsed.settings) parsed.settings = defaultSettings();
     if (typeof parsed.settings.unit !== "string") parsed.settings.unit = "kg";
@@ -1303,6 +1305,7 @@
     entryMemo: "",
     logFlash: false,
     exerciseDetailId: null,
+    detailReturnTab: null,
     chartTooltipIndex: {},
     modal: null,
     modalPart: "",
@@ -1314,8 +1317,31 @@
     historyViewMode: "date",
     statsPeriod: "week",
     statsAnchor: todayStr(),
+    bwDate: todayStr(),
+    bwEntry: 60,
+    bwRange: "3m",
     toast: null
   };
+
+  function bodyWeightOn(dateStr) {
+    for (var i = 0; i < state.bodyWeights.length; i++) if (state.bodyWeights[i].date === dateStr) return state.bodyWeights[i];
+    return null;
+  }
+
+  function sortedBodyWeights() {
+    return state.bodyWeights.slice().sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
+  }
+
+  function primeBodyWeightEntry() {
+    var onDate = bodyWeightOn(ui.bwDate);
+    if (onDate) { ui.bwEntry = Math.round(toDisplayWeight(onDate.weight) * 10) / 10; return; }
+    var before = sortedBodyWeights().filter(function (b) { return b.date < ui.bwDate; });
+    var all = sortedBodyWeights();
+    var ref = before.length ? before[before.length - 1] : (all.length ? all[all.length - 1] : null);
+    if (ref) ui.bwEntry = Math.round(toDisplayWeight(ref.weight) * 10) / 10;
+    else ui.bwEntry = state.settings.unit === "lb" ? 130 : 60;
+  }
+  primeBodyWeightEntry();
 
   function primeEntryFromHistory(exId) {
     var mine = state.sets.filter(function (s) { return s.exerciseId === exId; });
@@ -1404,7 +1430,7 @@
     if (ex) {
       var preview = e1rm(toStorageWeight(ui.entryWeight), ui.entryReps);
       html += '<div class="entry-card">';
-      html += '<div class="entry-card-title">' + escapeHtml(ex.name) + '</div>';
+      html += '<div class="detail-title-row"><span class="entry-card-title">' + escapeHtml(ex.name) + '</span><button class="btn-text" data-action="view-exercise-history" data-id="' + ex.id + '">過去の記録 ›</button></div>';
 
       var priorSets = state.sets.filter(function (s) { return s.exerciseId === ex.id && s.date !== ui.selectedDate; });
       priorSets.sort(function (a, b) { return b.ts - a.ts; });
@@ -1879,12 +1905,17 @@
     });
   }
 
-  function buildChartSVG(points, exId) {
-    var W = 320, H = 132, padL = 30, padR = 14, padT = 14, padB = 22;
+  function buildChartSVG(points, exId, opts) {
+    opts = opts || {};
+    var W = 320, H = opts.height || 132, padL = 30, padR = 14, padT = 14, padB = 22;
     var innerW = W - padL - padR, innerH = H - padT - padB;
     var weights = points.map(function (p) { return p.weight; });
     var min = Math.min.apply(null, weights), max = Math.max.apply(null, weights);
     if (min === max) { min -= 5; max += 5; }
+    if (opts.minSpan && max - min < opts.minSpan) {
+      var mid = (max + min) / 2;
+      min = mid - opts.minSpan / 2; max = mid + opts.minSpan / 2;
+    }
     var margin = (max - min) * 0.18;
     min = Math.max(0, min - margin); max = max + margin;
 
@@ -1896,6 +1927,10 @@
     for (var g = 0; g < 3; g++) {
       var gy = padT + (innerH * g / 2);
       svg += '<line class="chart-grid" x1="' + padL + '" y1="' + gy.toFixed(1) + '" x2="' + (W - padR) + '" y2="' + gy.toFixed(1) + '"></line>';
+      if (opts.yAxis) {
+        var gv = max - (max - min) * g / 2;
+        svg += '<text class="chart-axis-label" x="' + (padL - 4) + '" y="' + (gy + 3).toFixed(1) + '" text-anchor="end">' + gv.toFixed(1) + '</text>';
+      }
     }
 
     var d = points.map(function (p, i) {
@@ -1903,11 +1938,14 @@
     }).join(" ");
     svg += '<path class="chart-line" d="' + d + '"></path>';
 
+    var dense = opts.yAxis && points.length > 30;
+    var hitR = Math.max(4, Math.min(14, innerW / Math.max(1, points.length - 1) / 2));
     points.forEach(function (p, i) {
       var isEnd = i === points.length - 1;
       var cx = xFor(i).toFixed(1), cy = yFor(p.weight).toFixed(1);
-      svg += '<circle class="' + (isEnd ? "chart-dot-end" : "chart-dot") + '" cx="' + cx + '" cy="' + cy + '" r="' + (isEnd ? 5 : 3.5) + '"></circle>';
-      svg += '<circle class="chart-hit" data-action="chart-point-tap" data-exid="' + exId + '" data-index="' + i + '" cx="' + cx + '" cy="' + cy + '" r="14"></circle>';
+      if (!dense || isEnd) svg += '<circle class="' + (isEnd ? "chart-dot-end" : "chart-dot") + '" cx="' + cx + '" cy="' + cy + '" r="' + (isEnd ? 5 : 3.5) + '"></circle>';
+      if (opts.selectedIndex === i && !isEnd) svg += '<circle class="chart-dot-selected" cx="' + cx + '" cy="' + cy + '" r="6"></circle>';
+      svg += '<circle class="chart-hit" data-action="chart-point-tap" data-exid="' + exId + '" data-index="' + i + '" cx="' + cx + '" cy="' + cy + '" r="' + (opts.yAxis ? hitR : 14).toFixed(1) + '"></circle>';
     });
 
     svg += '<text class="chart-axis-label" x="' + padL + '" y="' + (H - 6) + '" text-anchor="start">' + formatDateShort(points[0].date) + '</text>';
@@ -1921,7 +1959,8 @@
     if (!ex) { ui.exerciseDetailId = null; return renderExercisesTab(); }
     var sets = state.sets.filter(function (s) { return s.exerciseId === id; });
 
-    var html = '<button class="detail-back" data-action="back-to-exercise-list">‹ 種目一覧</button>';
+    var backLabel = { log: "記録に戻る", history: "履歴に戻る" }[ui.detailReturnTab] || "種目一覧";
+    var html = '<button class="detail-back" data-action="back-to-exercise-list">‹ ' + backLabel + '</button>';
     html += '<div class="detail-title-row"><span class="detail-title">' + escapeHtml(ex.name) + '</span><button class="btn-text" data-action="open-rename-exercise" data-id="' + ex.id + '">名前を変更</button></div>';
 
     var maxWeight = 0, maxE1rm = 0;
@@ -1973,6 +2012,106 @@
     html += '</section>';
 
     html += '<button class="btn-danger" data-action="open-delete-exercise" data-id="' + ex.id + '">この種目を削除</button>';
+    return html;
+  }
+
+  /* ---------------- render: body weight tab ---------------- */
+
+  var BW_RANGES = [
+    { key: "1m", label: "1ヶ月", days: 30 },
+    { key: "3m", label: "3ヶ月", days: 91 },
+    { key: "1y", label: "1年", days: 365 },
+    { key: "all", label: "全期間", days: null }
+  ];
+
+  function fmtBw(kg) { return toDisplayWeight(kg).toFixed(1); }
+
+  function fmtBwDiff(kg) {
+    var v = Math.round(toDisplayWeight(kg) * 10) / 10;
+    if (v === 0) return "±0.0";
+    return (v > 0 ? "+" : "−") + Math.abs(v).toFixed(1);
+  }
+
+  function renderBodyWeightTab() {
+    var html = "";
+    var isToday = ui.bwDate === todayStr();
+    var existing = bodyWeightOn(ui.bwDate);
+
+    html += '<section class="date-nav-section">';
+    html += '<div class="date-nav">';
+    html += '<button class="date-nav-btn" data-action="bw-date-prev">‹</button>';
+    html += '<span class="date-label">' + formatDateLabel(ui.bwDate) + (isToday ? '<span class="today-flag">TODAY</span>' : '') + '</span>';
+    html += '<button class="date-nav-btn" data-action="bw-date-next"' + (isToday ? " disabled" : "") + '>›</button>';
+    html += '</div>';
+    html += '</section>';
+
+    html += '<div class="entry-card">';
+    html += '<div class="entry-card-title">体重</div>';
+    if (existing) html += '<div class="last-set-hint">この日の記録: <b>' + fmtBw(existing.weight) + unitLabel() + '</b>（記録すると上書きされます）</div>';
+    html += '<div class="stepper-row">';
+    html += '<span class="stepper-label">体重</span>';
+    html += '<button class="stepper-btn" data-action="bw-stepper" data-delta="-0.1">－</button>';
+    html += '<div class="stepper-input-wrap"><input id="bw-input" class="stepper-input" type="number" inputmode="decimal" step="0.1" min="0" value="' + ui.bwEntry.toFixed(1) + '"><span class="stepper-unit">' + unitLabel() + '</span></div>';
+    html += '<button class="stepper-btn" data-action="bw-stepper" data-delta="0.1">＋</button>';
+    html += '</div>';
+    html += '<button class="btn-primary' + (ui.logFlash ? ' btn-flash' : '') + '" data-action="bw-log">' + (existing ? "体重を更新する" : "体重を記録する") + '</button>';
+    ui.logFlash = false;
+    html += '</div>';
+
+    var all = sortedBodyWeights();
+    if (!all.length) {
+      html += '<div class="empty-state">まだ体重の記録がありません。<br>上から今日の体重を記録しましょう。</div>';
+      return html;
+    }
+
+    var range = BW_RANGES.filter(function (r) { return r.key === ui.bwRange; })[0] || BW_RANGES[1];
+    var startDate = range.days ? addDays(todayStr(), -range.days) : "0000-00-00";
+    var inRange = all.filter(function (b) { return b.date >= startDate; });
+
+    var latest = all[all.length - 1];
+    var prev = all.length >= 2 ? all[all.length - 2] : null;
+
+    html += '<div class="stat-row">';
+    html += '<div class="stat-tile"><div class="stat-value">' + fmtBw(latest.weight) + '<span class="stat-unit">' + unitLabel() + '</span></div><div class="stat-label">最新（' + formatDateShort(latest.date) + '）</div></div>';
+    html += '<div class="stat-tile"><div class="stat-value">' + (prev ? fmtBwDiff(latest.weight - prev.weight) : "—") + '</div><div class="stat-label">前回比</div></div>';
+    html += '<div class="stat-tile"><div class="stat-value">' + (inRange.length >= 2 ? fmtBwDiff(inRange[inRange.length - 1].weight - inRange[0].weight) : "—") + '</div><div class="stat-label">' + range.label + 'の変化</div></div>';
+    html += '</div>';
+
+    html += '<div class="chip-row filter-row">';
+    BW_RANGES.forEach(function (r) {
+      html += '<button class="chip' + (r.key === range.key ? " is-selected" : "") + '" data-action="bw-range" data-range="' + r.key + '">' + r.label + '</button>';
+    });
+    html += '</div>';
+
+    html += '<div class="chart-card">';
+    if (inRange.length >= 2) {
+      var points = inRange.map(function (b) { return { date: b.date, weightKg: b.weight, weight: toDisplayWeight(b.weight) }; });
+      var tIdx = ui.chartTooltipIndex.bw;
+      var hasSel = typeof tIdx === "number" && points[tIdx];
+      html += buildChartSVG(points, "bw", { yAxis: true, height: 150, minSpan: state.settings.unit === "lb" ? 4 : 2, selectedIndex: hasSel ? tIdx : null });
+      var shown = hasSel ? points[tIdx] : points[points.length - 1];
+      html += '<div class="chart-caption">' + formatDateLabel(shown.date) + '　<b>' + fmtBw(shown.weightKg) + unitLabel() + '</b></div>';
+    } else {
+      html += '<div class="empty-state" style="border:none;padding:18px 8px;">この期間の記録が2日分以上になると、体重の推移グラフが表示されます。</div>';
+    }
+    html += '</div>';
+
+    html += '<section>';
+    html += '<h2 class="section-title">記録一覧</h2>';
+    html += '<div class="set-list">';
+    for (var i = all.length - 1; i >= 0; i--) {
+      var b = all[i];
+      var before = i > 0 ? all[i - 1] : null;
+      html += '<div class="set-row"><div class="set-row-main">';
+      html += '<span class="set-row-idx" style="width:auto;font-size:0.7rem;">' + formatDateShort(b.date) + '</span>';
+      html += '<span class="set-row-figure">' + fmtBw(b.weight) + '<span class="x">' + unitLabel() + '</span></span>';
+      html += '<span class="bw-row-diff">' + (before ? fmtBwDiff(b.weight - before.weight) : "") + '</span>';
+      html += '<button class="set-row-del" data-action="bw-delete" data-date="' + b.date + '">×</button>';
+      html += '</div></div>';
+    }
+    html += '</div>';
+    html += '</section>';
+
     return html;
   }
 
@@ -2033,6 +2172,9 @@
     } else if (m.type === "confirmDeleteSet") {
       html += '<div class="modal-title">このセットを削除しますか？</div>';
       html += '<div class="modal-actions"><button class="btn-secondary" data-action="modal-cancel">キャンセル</button><button class="btn-danger" data-action="modal-confirm-delete-set" data-id="' + m.id + '">削除する</button></div>';
+    } else if (m.type === "confirmDeleteBodyWeight") {
+      html += '<div class="modal-title">' + formatDateLabel(m.date) + 'の体重記録を削除しますか？</div>';
+      html += '<div class="modal-actions"><button class="btn-secondary" data-action="modal-cancel">キャンセル</button><button class="btn-danger" data-action="modal-confirm-delete-bw" data-date="' + m.date + '">削除する</button></div>';
     } else if (m.type === "confirmDeletePart") {
       var affected = state.exercises.filter(function (e) { return e.part === m.part; }).length;
       html += '<div class="modal-title">「' + escapeHtml(m.part) + '」を削除しますか？</div>';
@@ -2040,7 +2182,7 @@
       html += '<div class="modal-actions"><button class="btn-secondary" data-action="modal-cancel">キャンセル</button><button class="btn-danger" data-action="modal-confirm-delete-part" data-part="' + escapeHtml(m.part) + '">削除する</button></div>';
     } else if (m.type === "confirmImport") {
       html += '<div class="modal-title">データを復元しますか？</div>';
-      html += '<div class="modal-text">選択したファイルには種目' + m.data.exercises.length + '件、セット記録' + m.data.sets.length + '件が含まれています。復元すると、現在保存されているすべてのデータが上書きされます。この操作は取り消せません。</div>';
+      html += '<div class="modal-text">選択したファイルには種目' + m.data.exercises.length + '件、セット記録' + m.data.sets.length + '件' + (Array.isArray(m.data.bodyWeights) && m.data.bodyWeights.length ? '、体重記録' + m.data.bodyWeights.length + '件' : '') + 'が含まれています。復元すると、現在保存されているすべてのデータが上書きされます。この操作は取り消せません。</div>';
       html += '<div class="modal-actions"><button class="btn-secondary" data-action="modal-cancel">キャンセル</button><button class="btn-danger" data-action="modal-confirm-import">復元する</button></div>';
     } else if (m.type === "importError") {
       html += '<div class="modal-title">読み込めませんでした</div>';
@@ -2064,6 +2206,7 @@
     if (ui.tab === "log") view.innerHTML = renderLogTab();
     else if (ui.tab === "history") view.innerHTML = renderHistoryTab();
     else if (ui.tab === "stats") view.innerHTML = renderStatsTab();
+    else if (ui.tab === "bodyweight") view.innerHTML = renderBodyWeightTab();
     else view.innerHTML = renderExercisesTab();
     renderModal();
   }
@@ -2104,11 +2247,18 @@
 
   /* ---------------- actions ---------------- */
 
+  function scrollViewToTop() {
+    var view = document.getElementById("view");
+    if (view) view.scrollTop = 0;
+    try { window.scrollTo(0, 0); } catch (e) { /* ignore */ }
+  }
+
   function handleAction(action, target, ev) {
     var id = target.getAttribute("data-id");
     if (action === "select-tab") {
       ui.tab = target.getAttribute("data-tab");
       ui.exerciseDetailId = null;
+      ui.detailReturnTab = null;
       render();
     } else if (action === "select-exercise") {
       ui.selectedExerciseId = id;
@@ -2118,9 +2268,11 @@
       ui.historyViewMode = target.getAttribute("data-mode");
       render();
     } else if (action === "view-exercise-history") {
+      ui.detailReturnTab = ui.tab;
       ui.tab = "exercises";
       ui.exerciseDetailId = id;
       render();
+      scrollViewToTop();
     } else if (action === "stats-set-period") {
       ui.statsPeriod = target.getAttribute("data-period");
       render();
@@ -2184,10 +2336,14 @@
       render();
     } else if (action === "open-exercise-detail") {
       ui.exerciseDetailId = id;
+      ui.detailReturnTab = null;
       render();
     } else if (action === "back-to-exercise-list") {
       ui.exerciseDetailId = null;
+      if (ui.detailReturnTab && ui.detailReturnTab !== "exercises") ui.tab = ui.detailReturnTab;
+      ui.detailReturnTab = null;
       render();
+      scrollViewToTop();
     } else if (action === "open-add-exercise") {
       ui.modalPart = "";
       ui.modal = { type: "addExercise" };
@@ -2221,7 +2377,10 @@
     } else if (action === "modal-pick-part") {
       var pickedPart = target.getAttribute("data-part");
       ui.modalPart = (ui.modalPart === pickedPart) ? "" : pickedPart;
-      renderModal();
+      // re-rendering the modal would wipe the name being typed, so only toggle the chips
+      document.querySelectorAll('#modal-root [data-action="modal-pick-part"]').forEach(function (chip) {
+        chip.classList.toggle("is-selected", chip.getAttribute("data-part") === ui.modalPart);
+      });
     } else if (action === "open-delete-exercise") {
       ui.modal = { type: "confirmDeleteExercise", id: id };
       renderModal();
@@ -2229,8 +2388,12 @@
       state.exercises = state.exercises.filter(function (e) { return e.id !== id; });
       state.sets = state.sets.filter(function (s) { return s.exerciseId !== id; });
       saveState();
-      if (ui.selectedExerciseId === id) ui.selectedExerciseId = state.exercises[0] ? state.exercises[0].id : null;
+      if (ui.selectedExerciseId === id) {
+        ui.selectedExerciseId = state.exercises[0] ? state.exercises[0].id : null;
+        if (ui.selectedExerciseId) primeEntryFromHistory(ui.selectedExerciseId);
+      }
       ui.exerciseDetailId = null;
+      ui.detailReturnTab = null;
       ui.modal = null;
       render();
     } else if (action === "modal-cancel" || action === "modal-overlay") {
@@ -2273,6 +2436,7 @@
         state.settings.weightStep = newUnit === "lb" ? 5 : 2.5;
         saveState();
         if (ui.selectedExerciseId) primeEntryFromHistory(ui.selectedExerciseId);
+        primeBodyWeightEntry();
       }
       render();
     } else if (action === "set-weight-step") {
@@ -2345,10 +2509,50 @@
         if (ui.selectedExerciseId) primeEntryFromHistory(ui.selectedExerciseId);
         ui.exerciseDetailId = null;
         ui.logFilterPart = null;
+        ui.chartTooltipIndex = {};
+        primeBodyWeightEntry();
         updateStopwatchDisplay();
         maybeStopTicking();
         showToast("データを復元しました");
       }
+      ui.modal = null;
+      render();
+    } else if (action === "bw-date-prev") {
+      ui.bwDate = addDays(ui.bwDate, -1);
+      primeBodyWeightEntry();
+      render();
+    } else if (action === "bw-date-next") {
+      if (ui.bwDate !== todayStr()) ui.bwDate = addDays(ui.bwDate, 1);
+      primeBodyWeightEntry();
+      render();
+    } else if (action === "bw-stepper") {
+      ui.bwEntry = Math.max(0, Math.round((ui.bwEntry + parseFloat(target.getAttribute("data-delta"))) * 10) / 10);
+      var bwi = document.getElementById("bw-input");
+      if (bwi) bwi.value = ui.bwEntry.toFixed(1);
+    } else if (action === "bw-log") {
+      if (!(ui.bwEntry > 0)) return;
+      var bwKg = toStorageWeight(ui.bwEntry);
+      var bwExisting = bodyWeightOn(ui.bwDate);
+      if (bwExisting) { bwExisting.weight = bwKg; bwExisting.ts = Date.now(); }
+      else state.bodyWeights.push({ date: ui.bwDate, weight: bwKg, ts: Date.now() });
+      saveState();
+      ui.chartTooltipIndex.bw = null;
+      ui.logFlash = true;
+      showToast(bwExisting ? "体重を更新しました" : "体重を記録しました");
+      render();
+    } else if (action === "bw-range") {
+      ui.bwRange = target.getAttribute("data-range");
+      ui.chartTooltipIndex.bw = null;
+      render();
+    } else if (action === "bw-delete") {
+      ui.modal = { type: "confirmDeleteBodyWeight", date: target.getAttribute("data-date") };
+      renderModal();
+    } else if (action === "modal-confirm-delete-bw") {
+      var bwDelDate = target.getAttribute("data-date");
+      state.bodyWeights = state.bodyWeights.filter(function (b) { return b.date !== bwDelDate; });
+      saveState();
+      ui.chartTooltipIndex.bw = null;
+      if (bwDelDate === ui.bwDate) primeBodyWeightEntry();
       ui.modal = null;
       render();
     } else if (action === "chart-point-tap") {
@@ -2376,6 +2580,9 @@
       var v2 = parseInt(e.target.value, 10);
       ui.entryReps = isNaN(v2) ? 1 : Math.max(1, v2);
       updateEntryPreview();
+    } else if (e.target.id === "bw-input") {
+      var v3 = parseFloat(e.target.value);
+      ui.bwEntry = isNaN(v3) ? 0 : Math.max(0, v3);
     } else if (e.target.id === "memo-input") {
       ui.entryMemo = e.target.value;
     }
@@ -2410,14 +2617,6 @@
   if (state.stopwatch.running) ensureTicking();
   render();
 })();
-</script>
-
-<script>
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', function () {
-    navigator.serviceWorker.register('./sw.js').catch(function () {});
-  });
-}
 </script>
 
 </body></html>
