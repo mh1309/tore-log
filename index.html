@@ -906,6 +906,24 @@
   .ex-day-diff { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 0.74rem; font-weight: 600; color: var(--text-tertiary); }
   .ex-day-diff.is-up { color: var(--accent); }
   .ex-day-diff.is-down { color: var(--accent2); }
+  .day-set-chip.is-readonly { padding: 5px 10px; }
+  .btn-text-danger { color: var(--danger); align-self: center; font-size: 0.76rem; font-weight: 500; }
+  .btn-danger:disabled { opacity: 0.35; cursor: not-allowed; }
+  .hide-note { text-align: center; font-size: 0.74rem; color: var(--text-tertiary); margin-top: -8px; }
+  .hidden-ex-group { display: flex; flex-direction: column; }
+  .hidden-ex-summary {
+    list-style: none;
+    display: flex; align-items: center; gap: 6px;
+    cursor: pointer;
+    padding: 8px 2px;
+    font-size: 0.8rem; font-weight: 600;
+    color: var(--text-tertiary);
+  }
+  .hidden-ex-summary::-webkit-details-marker { display: none; }
+  .hidden-ex-summary .chev { transition: transform 0.15s ease; }
+  .hidden-ex-group[open] > .hidden-ex-summary .chev { transform: rotate(90deg); }
+  .hidden-ex-group[open] > .hidden-ex-summary { margin-bottom: 8px; }
+  .hidden-ex-group .ex-row { opacity: 0.75; }
   .ex-day-volume { font-size: 0.72rem; color: var(--text-tertiary); margin-top: -4px; }
 
   /* ---------- body weight ---------- */
@@ -1323,7 +1341,7 @@
 
   var ui = {
     tab: "log",
-    selectedExerciseId: state.exercises[0] ? state.exercises[0].id : null,
+    selectedExerciseId: null,
     selectedDate: todayStr(),
     entryWeight: 20,
     entryReps: 10,
@@ -1332,6 +1350,7 @@
     exerciseDetailId: null,
     detailReturnTab: null,
     detailShowAll: {},
+    hiddenListOpen: false,
     chartTooltipIndex: {},
     modal: null,
     modalPart: "",
@@ -1381,7 +1400,17 @@
     }
     ui.entryMemo = "";
   }
+  ui.selectedExerciseId = firstActiveExerciseId();
   if (ui.selectedExerciseId) primeEntryFromHistory(ui.selectedExerciseId);
+
+  function activeExercises() {
+    return state.exercises.filter(function (ex) { return !ex.hidden; });
+  }
+
+  function firstActiveExerciseId() {
+    var list = activeExercises();
+    return list[0] ? list[0].id : null;
+  }
 
   function exerciseById(id) {
     for (var i = 0; i < state.exercises.length; i++) if (state.exercises[i].id === id) return state.exercises[i];
@@ -1423,14 +1452,15 @@
     html += '</div>';
     html += '</section>';
 
-    if (!state.exercises.length) {
+    var active = activeExercises();
+    if (!active.length) {
       html += '<div class="empty-state">まだ種目がありません。<br>下のボタンから最初の種目を追加しましょう。</div>';
       html += '<button class="btn-primary" data-action="open-add-exercise">＋ 種目を追加</button>';
       return html;
     }
 
     var usedParts = [];
-    state.exercises.forEach(function (ex) { if (ex.part && usedParts.indexOf(ex.part) === -1) usedParts.push(ex.part); });
+    active.forEach(function (ex) { if (ex.part && usedParts.indexOf(ex.part) === -1) usedParts.push(ex.part); });
     if (usedParts.length > 1) {
       html += '<div class="chip-row filter-row">';
       html += '<button class="chip' + (!ui.logFilterPart ? " is-selected" : "") + '" data-action="set-log-filter" data-part="">すべて</button>';
@@ -1440,7 +1470,7 @@
       html += '</div>';
     }
 
-    var visibleExercises = ui.logFilterPart ? state.exercises.filter(function (ex) { return ex.part === ui.logFilterPart; }) : state.exercises;
+    var visibleExercises = ui.logFilterPart ? active.filter(function (ex) { return ex.part === ui.logFilterPart; }) : active;
 
     html += '<section>';
     html += '<div class="chip-row">';
@@ -1453,7 +1483,7 @@
     html += '</section>';
 
     var ex = exerciseById(ui.selectedExerciseId);
-    if (ex) {
+    if (ex && !ex.hidden) {
       var preview = e1rm(toStorageWeight(ui.entryWeight), ui.entryReps);
       html += '<div class="entry-card">';
       html += '<div class="detail-title-row"><span class="entry-card-title">' + escapeHtml(ex.name) + '</span><button class="btn-text" data-action="view-exercise-history" data-id="' + ex.id + '">過去の記録 ›</button></div>';
@@ -1682,7 +1712,7 @@
           meta = 'まだ記録がありません';
         }
         html += '<button class="ex-row" data-action="view-exercise-history" data-id="' + ex.id + '">';
-        html += '<span><span class="ex-row-name">' + escapeHtml(ex.name) + '</span><div class="ex-row-meta">' + meta + '</div></span>';
+        html += '<span><span class="ex-row-name">' + escapeHtml(ex.name) + '</span>' + (ex.hidden ? '<span class="part-tag">非表示中</span>' : '') + '<div class="ex-row-meta">' + meta + '</div></span>';
         html += '<span class="ex-row-arrow">›</span>';
         html += '</button>';
       });
@@ -1895,18 +1925,30 @@
   function renderExercisesTab() {
     if (ui.exerciseDetailId) return renderExerciseDetail(ui.exerciseDetailId);
 
+    function exRow(ex) {
+      var count = state.sets.filter(function (s) { return s.exerciseId === ex.id; }).length;
+      var row = '<button class="ex-row" data-action="open-exercise-detail" data-id="' + ex.id + '">';
+      row += '<span><span class="ex-row-name">' + escapeHtml(ex.name) + '</span><div class="ex-row-meta">' + count + 'セット記録済み' + (ex.part ? '<span class="part-tag">' + escapeHtml(ex.part) + '</span>' : '') + '</div></span>';
+      row += '<span class="ex-row-arrow">›</span>';
+      row += '</button>';
+      return row;
+    }
+
     var html = renderSettingsCard();
     html += '<section>';
     html += '<div class="ex-list">';
-    state.exercises.forEach(function (ex) {
-      var count = state.sets.filter(function (s) { return s.exerciseId === ex.id; }).length;
-      html += '<button class="ex-row" data-action="open-exercise-detail" data-id="' + ex.id + '">';
-      html += '<span><span class="ex-row-name">' + escapeHtml(ex.name) + '</span><div class="ex-row-meta">' + count + 'セット記録済み' + (ex.part ? '<span class="part-tag">' + escapeHtml(ex.part) + '</span>' : '') + '</div></span>';
-      html += '<span class="ex-row-arrow">›</span>';
-      html += '</button>';
-    });
+    activeExercises().forEach(function (ex) { html += exRow(ex); });
     html += '</div>';
     html += '<button class="btn-secondary" data-action="open-add-exercise">＋ 種目を追加</button>';
+    var hiddenList = state.exercises.filter(function (ex) { return ex.hidden; });
+    if (hiddenList.length) {
+      html += '<details class="hidden-ex-group"' + (ui.hiddenListOpen ? ' open' : '') + '>';
+      html += '<summary class="hidden-ex-summary">非表示の種目（' + hiddenList.length + '）<span class="chev">›</span></summary>';
+      html += '<div class="ex-list">';
+      hiddenList.forEach(function (ex) { html += exRow(ex); });
+      html += '</div>';
+      html += '</details>';
+    }
     html += '</section>';
     html += renderDataCard();
     return html;
@@ -1980,7 +2022,7 @@
 
     var backLabel = { log: "記録に戻る", history: "履歴に戻る" }[ui.detailReturnTab] || "種目一覧";
     var html = '<button class="detail-back" data-action="back-to-exercise-list">‹ ' + backLabel + '</button>';
-    html += '<div class="detail-title-row"><span class="detail-title">' + escapeHtml(ex.name) + '</span><button class="btn-text" data-action="open-rename-exercise" data-id="' + ex.id + '">名前を変更</button></div>';
+    html += '<div class="detail-title-row"><span class="detail-title">' + escapeHtml(ex.name) + (ex.hidden ? '<span class="part-tag">非表示中</span>' : '') + '</span><button class="btn-text" data-action="open-rename-exercise" data-id="' + ex.id + '">名前を変更</button></div>';
 
     var maxWeight = 0, maxE1rm = 0;
     sets.forEach(function (s) {
@@ -2015,20 +2057,24 @@
 
       // per-day summary, computed oldest → newest so each day can be compared with the one before it
       var days = [];
+      // top set = heaviest weight, ties broken by more reps
+      function isBetterSet(a, b) { return a.weight > b.weight || (a.weight === b.weight && a.reps > b.reps); }
       var bestSoFar = null;
       datesAsc.forEach(function (date, i) {
         var daySets = byDate[date].slice().sort(function (a, b) { return a.ts - b.ts; });
-        var top = Math.max.apply(null, daySets.map(function (s) { return s.weight; }));
+        var top = daySets.reduce(function (best, s) { return isBetterSet(s, best) ? s : best; });
         var volume = daySets.reduce(function (sum, s) { return sum + s.weight * s.reps; }, 0);
+        var prevTop = i > 0 ? days[i - 1].top : null;
         days.push({
           date: date,
           sets: daySets,
           top: top,
           volume: volume,
-          diff: i > 0 ? top - days[i - 1].top : null,
-          isPR: bestSoFar !== null && top > bestSoFar
+          diffWeight: prevTop ? top.weight - prevTop.weight : null,
+          diffReps: prevTop ? top.reps - prevTop.reps : null,
+          isPR: bestSoFar !== null && isBetterSet(top, bestSoFar)
         });
-        bestSoFar = bestSoFar === null ? top : Math.max(bestSoFar, top);
+        if (bestSoFar === null || isBetterSet(top, bestSoFar)) bestSoFar = top;
       });
       days.reverse();
 
@@ -2041,11 +2087,14 @@
         html += '<div class="ex-day-card">';
         html += '<div class="ex-day-head">';
         html += '<span class="ex-day-date">' + formatDateLabel(d.date) + '</span>';
-        html += '<span class="ex-day-summary">最高 <b>' + dispW(d.top) + unitLabel() + '</b>';
-        if (d.diff !== null) {
-          var dd = Math.round(toDisplayWeight(d.diff) * 100) / 100;
-          if (dd > 0) html += '<span class="ex-day-diff is-up">▲+' + fmtWeight(dd) + '</span>';
-          else if (dd < 0) html += '<span class="ex-day-diff is-down">▼−' + fmtWeight(-dd) + '</span>';
+        html += '<span class="ex-day-summary">最高 <b>' + dispW(d.top.weight) + unitLabel() + '×' + d.top.reps + '回</b>';
+        if (d.diffWeight !== null) {
+          // compare weight first; at the same weight, compare reps
+          var dd = Math.round(toDisplayWeight(d.diffWeight) * 100) / 100;
+          if (dd > 0) html += '<span class="ex-day-diff is-up">▲+' + fmtWeight(dd) + unitLabel() + '</span>';
+          else if (dd < 0) html += '<span class="ex-day-diff is-down">▼−' + fmtWeight(-dd) + unitLabel() + '</span>';
+          else if (d.diffReps > 0) html += '<span class="ex-day-diff is-up">▲+' + d.diffReps + '回</span>';
+          else if (d.diffReps < 0) html += '<span class="ex-day-diff is-down">▼−' + (-d.diffReps) + '回</span>';
           else html += '<span class="ex-day-diff">±0</span>';
         }
         if (d.isPR) html += '<span class="pr-badge">PR</span>';
@@ -2054,7 +2103,7 @@
         html += '<div class="ex-day-volume">' + d.sets.length + 'セット・総 ' + Number(dispW(d.volume)).toLocaleString() + unitLabel() + '</div>';
         html += '<div class="day-chip-row">';
         d.sets.forEach(function (s) {
-          html += '<span class="day-set-chip">' + dispW(s.weight) + '×' + s.reps + '<button data-action="delete-set" data-id="' + s.id + '" aria-label="このセットを削除">×</button></span>';
+          html += '<span class="day-set-chip is-readonly">' + dispW(s.weight) + '×' + s.reps + '</span>';
         });
         html += '</div>';
         var memoSets = d.sets.filter(function (s) { return s.memo; });
@@ -2077,7 +2126,9 @@
     }
     html += '</section>';
 
-    html += '<button class="btn-danger" data-action="open-delete-exercise" data-id="' + ex.id + '">この種目を削除</button>';
+    html += '<button class="btn-secondary" data-action="toggle-exercise-hidden" data-id="' + ex.id + '">' + (ex.hidden ? '記録画面に表示を戻す' : 'この種目を非表示にする') + '</button>';
+    if (!ex.hidden) html += '<div class="hide-note">非表示にしても、これまでの記録は残ります。</div>';
+    else html += '<button class="btn-text btn-text-danger" data-action="open-delete-exercise" data-id="' + ex.id + '">この種目を完全に削除…</button>';
     return html;
   }
 
@@ -2213,8 +2264,9 @@
       var ex2 = exerciseById(m.id);
       var count = state.sets.filter(function (s) { return s.exerciseId === m.id; }).length;
       html += '<div class="modal-title">「' + escapeHtml(ex2 ? ex2.name : "") + '」を削除しますか？</div>';
-      html += '<div class="modal-text">この種目に記録された' + count + '件のセットもすべて削除されます。この操作は取り消せません。</div>';
-      html += '<div class="modal-actions"><button class="btn-secondary" data-action="modal-cancel">キャンセル</button><button class="btn-danger" data-action="modal-confirm-delete-exercise" data-id="' + m.id + '">削除する</button></div>';
+      html += '<div class="modal-text">この種目に記録された' + count + '件のセットもすべて削除されます。この操作は取り消せません。<br>削除するには、下に種目名「<b>' + escapeHtml(ex2 ? ex2.name : "") + '</b>」を入力してください。</div>';
+      html += '<input class="modal-input" id="modal-input" type="text" autocomplete="off" placeholder="' + escapeHtml(ex2 ? ex2.name : "") + '">';
+      html += '<div class="modal-actions"><button class="btn-secondary" data-action="modal-cancel">キャンセル</button><button class="btn-danger" id="delete-exercise-confirm-btn" data-action="modal-confirm-delete-exercise" data-id="' + m.id + '" disabled>削除する</button></div>';
     } else if (m.type === "calendarMonthPicker") {
       var pickerParts = ui.calendarMonth.split("-").map(Number);
       var curYear = pickerParts[0], curMonth = pickerParts[1];
@@ -2451,11 +2503,15 @@
       ui.modal = { type: "confirmDeleteExercise", id: id };
       renderModal();
     } else if (action === "modal-confirm-delete-exercise") {
+      // only hidden exercises can be deleted, and only after typing the exact name
+      var exToDelete = exerciseById(id);
+      var typed = document.getElementById("modal-input");
+      if (!exToDelete || !exToDelete.hidden || !typed || typed.value.trim() !== exToDelete.name) return;
       state.exercises = state.exercises.filter(function (e) { return e.id !== id; });
       state.sets = state.sets.filter(function (s) { return s.exerciseId !== id; });
       saveState();
       if (ui.selectedExerciseId === id) {
-        ui.selectedExerciseId = state.exercises[0] ? state.exercises[0].id : null;
+        ui.selectedExerciseId = firstActiveExerciseId();
         if (ui.selectedExerciseId) primeEntryFromHistory(ui.selectedExerciseId);
       }
       ui.exerciseDetailId = null;
@@ -2488,7 +2544,7 @@
       render();
     } else if (action === "set-log-filter") {
       ui.logFilterPart = target.getAttribute("data-part") || null;
-      var visible = ui.logFilterPart ? state.exercises.filter(function (ex) { return ex.part === ui.logFilterPart; }) : state.exercises;
+      var visible = ui.logFilterPart ? activeExercises().filter(function (ex) { return ex.part === ui.logFilterPart; }) : activeExercises();
       var stillVisible = visible.some(function (ex) { return ex.id === ui.selectedExerciseId; });
       if (!stillVisible) {
         ui.selectedExerciseId = visible[0] ? visible[0].id : null;
@@ -2571,7 +2627,7 @@
         state.stopwatch.running = false;
         state.stopwatch.startedAt = null;
         saveState();
-        ui.selectedExerciseId = state.exercises[0] ? state.exercises[0].id : null;
+        ui.selectedExerciseId = firstActiveExerciseId();
         if (ui.selectedExerciseId) primeEntryFromHistory(ui.selectedExerciseId);
         ui.exerciseDetailId = null;
         ui.logFilterPart = null;
@@ -2582,6 +2638,21 @@
         showToast("データを復元しました");
       }
       ui.modal = null;
+      render();
+    } else if (action === "toggle-exercise-hidden") {
+      var exToToggle = exerciseById(id);
+      if (!exToToggle) return;
+      exToToggle.hidden = !exToToggle.hidden;
+      saveState();
+      if (exToToggle.hidden && ui.selectedExerciseId === id) {
+        ui.selectedExerciseId = firstActiveExerciseId();
+        if (ui.selectedExerciseId) primeEntryFromHistory(ui.selectedExerciseId);
+      }
+      if (!exToToggle.hidden && !ui.selectedExerciseId) {
+        ui.selectedExerciseId = id;
+        primeEntryFromHistory(id);
+      }
+      showToast(exToToggle.hidden ? "非表示にしました" : "表示に戻しました");
       render();
     } else if (action === "toggle-detail-show-all") {
       ui.detailShowAll[id] = !ui.detailShowAll[id];
@@ -2680,7 +2751,16 @@
     if (e.target.closest && e.target.closest(".stepper-btn")) e.preventDefault();
   });
 
+  document.addEventListener("toggle", function (e) {
+    if (e.target.classList && e.target.classList.contains("hidden-ex-group")) ui.hiddenListOpen = e.target.open;
+  }, true);
+
   document.addEventListener("input", function (e) {
+    var delBtn = document.getElementById("delete-exercise-confirm-btn");
+    if (delBtn && e.target.id === "modal-input") {
+      var target = exerciseById(delBtn.getAttribute("data-id"));
+      delBtn.disabled = !target || e.target.value.trim() !== target.name;
+    }
     if (e.target.id === "weight-input") {
       var v = parseFloat(e.target.value);
       ui.entryWeight = isNaN(v) ? 0 : Math.max(0, v);
