@@ -297,6 +297,9 @@
     color: var(--text);
     display: flex; align-items: center; justify-content: center;
     line-height: 1;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
   }
   .stepper-btn:active { background: var(--surface-3); }
   .stepper-input-wrap {
@@ -2561,7 +2564,47 @@
     unlockAudio();
     var action = el.getAttribute("data-action");
     if (action === "modal-overlay" && e.target !== el) return; // click landed inside the sheet, not the backdrop
+    if (REPEAT_ACTIONS[action] && suppressStepperClick) { suppressStepperClick = false; return; } // already applied on pointerdown
     handleAction(action, el, e);
+  });
+
+  /* ---------------- press-and-hold on steppers: repeat, speeding up the longer it's held ---------------- */
+
+  var REPEAT_ACTIONS = { "stepper": true, "bw-stepper": true };
+  var REPEAT_FIRST_DELAY = 400, REPEAT_START_INTERVAL = 180, REPEAT_MIN_INTERVAL = 60, REPEAT_ACCEL = 0.85;
+  var repeatTimer = null;
+  var suppressStepperClick = false;
+
+  function stopRepeat() {
+    if (repeatTimer) { clearTimeout(repeatTimer); repeatTimer = null; }
+  }
+
+  document.addEventListener("pointerdown", function (e) {
+    if (e.button !== 0) return;
+    var el = e.target.closest("[data-action]");
+    if (!el) return;
+    var action = el.getAttribute("data-action");
+    if (!REPEAT_ACTIONS[action]) return;
+    stopRepeat();
+    suppressStepperClick = true;
+    handleAction(action, el, e);
+    var interval = REPEAT_START_INTERVAL;
+    function step() {
+      if (!document.body.contains(el)) { stopRepeat(); return; }
+      handleAction(action, el, e);
+      interval = Math.max(REPEAT_MIN_INTERVAL, interval * REPEAT_ACCEL);
+      repeatTimer = setTimeout(step, interval);
+    }
+    repeatTimer = setTimeout(step, REPEAT_FIRST_DELAY);
+  });
+  ["pointerup", "pointercancel"].forEach(function (type) { document.addEventListener(type, stopRepeat); });
+  document.addEventListener("pointerout", function (e) {
+    var el = e.target.closest && e.target.closest("[data-action]");
+    if (el && REPEAT_ACTIONS[el.getAttribute("data-action")] && !el.contains(e.relatedTarget)) stopRepeat();
+  });
+  window.addEventListener("blur", stopRepeat);
+  document.addEventListener("contextmenu", function (e) {
+    if (e.target.closest && e.target.closest(".stepper-btn")) e.preventDefault();
   });
 
   document.addEventListener("input", function (e) {
