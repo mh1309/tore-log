@@ -907,6 +907,9 @@
   .ex-day-diff.is-up { color: var(--accent); }
   .ex-day-diff.is-down { color: var(--accent2); }
   .day-set-chip.is-readonly { padding: 5px 10px; }
+  .custom-step-row { display: flex; align-items: center; gap: 8px; }
+  .custom-step-label { font-size: 0.78rem; color: var(--text-secondary); white-space: nowrap; }
+  .settings-card .custom-step-input { flex: 1; min-width: 0; height: 41px; padding: 0 12px; font-size: 0.9rem; font-family: var(--font-mono); }
   .btn-text-danger { color: var(--danger); align-self: center; font-size: 0.76rem; font-weight: 500; }
   .btn-danger:disabled { opacity: 0.35; cursor: not-allowed; }
   .hide-note { text-align: center; font-size: 0.74rem; color: var(--text-tertiary); margin-top: -8px; }
@@ -1888,9 +1891,19 @@
     });
     html += '</div></div>';
     html += '<div class="settings-row"><span class="settings-row-label">重量の刻み幅</span><div class="chip-row" style="padding:0;">';
-    weightStepOptions().forEach(function (step) {
+    var presets = weightStepOptions();
+    presets.forEach(function (step) {
       html += '<button class="chip' + (state.settings.weightStep === step ? " is-selected" : "") + '" data-action="set-weight-step" data-step="' + step + '">' + fmtWeight(step) + unitLabel() + '</button>';
     });
+    if (presets.indexOf(state.settings.weightStep) === -1) {
+      html += '<button class="chip is-selected" data-action="set-weight-step" data-step="' + state.settings.weightStep + '">' + fmtWeight(state.settings.weightStep) + unitLabel() + '</button>';
+    }
+    html += '</div>';
+    html += '<div class="custom-step-row">';
+    html += '<span class="custom-step-label">自分で設定</span>';
+    html += '<input class="modal-input custom-step-input" id="custom-step-input" type="number" inputmode="decimal" step="0.01" min="0.01" max="100" placeholder="例：1">';
+    html += '<span class="stepper-unit">' + unitLabel() + '</span>';
+    html += '<button class="btn-secondary" data-action="set-custom-weight-step">設定</button>';
     html += '</div></div>';
     html += '<div class="settings-row"><span class="settings-row-label">部位</span><div class="chip-row" style="padding:0;flex-wrap:wrap;">';
     state.parts.forEach(function (p) {
@@ -2560,6 +2573,17 @@
         if (ui.selectedExerciseId) primeEntryFromHistory(ui.selectedExerciseId);
         primeBodyWeightEntry();
       }
+      render();
+    } else if (action === "set-custom-weight-step") {
+      var stepInput = document.getElementById("custom-step-input");
+      var customStep = stepInput ? Math.round(parseFloat(stepInput.value) * 100) / 100 : NaN;
+      if (!(customStep > 0) || customStep > 100) {
+        showToast("0.01〜100の数値を入力してください");
+        return;
+      }
+      state.settings.weightStep = customStep;
+      saveState();
+      showToast("刻み幅を" + fmtWeight(customStep) + unitLabel() + "にしました");
       render();
     } else if (action === "set-weight-step") {
       state.settings.weightStep = parseFloat(target.getAttribute("data-step"));
